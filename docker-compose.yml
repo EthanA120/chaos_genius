@@ -7,15 +7,19 @@ x-logging: &default-logging
   driver: json-file
 x-version:
   &chaosgenius-version
-  CHAOSGENIUS_VERSION_POSTFIX=stable-compose
+  CHAOSGENIUS_VERSION_POSTFIX=dev-compose
 
 services:
   chaosgenius-server:
     container_name: chaosgenius-server
-    image: chaosgenius/chaosgenius-server:0.10.2
-    command: sh setup/run-backend-docker.sh
-    restart: unless-stopped
+    build:
+      context: .
+      args:
+        DEV: 1
+    command: sh setup/run-backend-docker.sh --reload
+    restart: on-failure:5
     volumes:
+      - ./:/usr/src/app/
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - chaosgenius-db
@@ -70,11 +74,13 @@ services:
 
   chaosgenius-webapp:
     container_name: chaosgenius-webapp
-    image: chaosgenius/chaosgenius-webapp:0.10.2
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
     command: >
       sh -c "npx react-inject-env set -d ./ &&
              nginx -g 'daemon off;'"
-    restart: unless-stopped
+    restart: on-failure:5
     volumes:
       - ./frontend/nginx:/etc/nginx/conf.d/
     ports:
@@ -89,7 +95,7 @@ services:
   chaosgenius-db:
     container_name: chaosgenius-db
     image: postgres:13
-    restart: unless-stopped
+    restart: on-failure:5
     healthcheck:
       test: [ "CMD", "pg_isready", "-q", "-d", "chaosgenius_data", "-U", "postgres" ]
       timeout: 45s
@@ -101,17 +107,25 @@ services:
     volumes:
       - ./docker/cg-db-setup:/docker-entrypoint-initdb.d/
       - cg-db:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
 
   chaosgenius-redis:
     container_name: chaosgenius-redis
     image: "redis:6.2-alpine"
-    restart: unless-stopped
+    restart: on-failure:5
     
   chaosgenius-scheduler:
     container_name: chaosgenius-scheduler
-    image: chaosgenius/chaosgenius-server:0.10.2
-    command: celery -A run.celery beat --loglevel=DEBUG
-    restart: unless-stopped
+    build:
+      context: .
+      args:
+        DEV: 1
+    command: scripts/celery/dev_scheduler.sh
+    restart: on-failure:5
+    volumes:
+      - ./:/usr/src/app/
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - IN_DOCKER=True
       - AIRBYTE_ENABLED=${AIRBYTE_ENABLED}
@@ -146,9 +160,15 @@ services:
   
   chaosgenius-worker-analytics:
     container_name: chaosgenius-worker-analytics
-    image: chaosgenius/chaosgenius-server:0.10.2
-    command: celery -A run.celery worker --loglevel=INFO --concurrency=2 -P processes -Q anomaly-rca
-    restart: unless-stopped
+    build:
+      context: .
+      args:
+        DEV: 1
+    command: scripts/celery/dev_worker-analytics.sh
+    restart: on-failure:5
+    volumes:
+      - ./:/usr/src/app/
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - IN_DOCKER=True
       - AIRBYTE_ENABLED=${AIRBYTE_ENABLED}
@@ -200,9 +220,15 @@ services:
 
   chaosgenius-worker-alerts:
     container_name: chaosgenius-worker-alerts
-    image: chaosgenius/chaosgenius-server:0.10.2
-    command: celery -A run.celery worker --loglevel=INFO --concurrency=2 -P processes -Q alerts
-    restart: unless-stopped
+    build:
+      context: .
+      args:
+        DEV: 1
+    command: scripts/celery/dev_worker-alerts.sh
+    restart: on-failure:5
+    volumes:
+      - ./:/usr/src/app/
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - IN_DOCKER=True
       - AIRBYTE_ENABLED=${AIRBYTE_ENABLED}
